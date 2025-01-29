@@ -1,0 +1,12 @@
+.env
+agent_workspace/
+__pycache__/
+.cursorrules
+test_create_api.py
+.dockerignore
+cloudbuild.yaml
+data/
+browser_data/
+agent_workspace/
+temp/
+*.log
