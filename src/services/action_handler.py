@@ -84,7 +84,25 @@ class ActionHandler:
         if self.is_logged_in:
             return True
 
-        # Manual login required
+        # First check if we're already logged in by checking current URL
+        current_url = self.browser.driver.current_url
+        if "twitter.com/home" in current_url or "x.com/home" in current_url:
+            logger.info("Already logged in")
+            self.is_logged_in = True
+            return True
+
+        # Navigate to home to check login status
+        self.browser.navigate("https://twitter.com/home")
+        await asyncio.sleep(2)
+        
+        # Check if we got redirected to login page
+        current_url = self.browser.driver.current_url
+        if not ("login" in current_url):
+            logger.info("Already logged in")
+            self.is_logged_in = True
+            return True
+
+        # If we're not logged in, proceed with manual login
         logger.info("Starting manual login process")
         self.browser.navigate("https://x.com/login")
         await asyncio.sleep(2)

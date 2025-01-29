@@ -10,8 +10,9 @@ class CreateAPI:
     def __init__(self):
         """Initialize the Create API service."""
         load_dotenv()
-        self.api_key = os.getenv("X_API_KEY")
+        self.api_key = os.getenv("GENERATION_API_KEY")
         self.api_url = "http://localhost:3000/api/generate-external-api"
+
 
         if not self.api_key:
             logger.error("X_API_KEY not found in environment variables")

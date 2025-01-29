@@ -59,8 +59,11 @@ class BrowserController:
         """Set up and configure the Edge webdriver for Docker environment."""
         options = Options()
 
+        # Only add headless mode if specified
+        if self.headless:
+            options.add_argument("--headless")
+
         # Required for running in Docker
-        options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")

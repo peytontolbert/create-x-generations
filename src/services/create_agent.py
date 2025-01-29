@@ -27,13 +27,14 @@ class CreateAgent:
         self.classifier_agent = Agent(
             agent_name="request-classifier",
             system_prompt="""You are an AI agent specialized in classifying user messages.
-            Determine if a message is requesting AI image generation.
+            Determine if a message is requesting AI content media generation.
             Respond with only 'true' or 'false'.
             Examples of generation requests:
             - "Can you create an image of..."
-            - "Generate a picture of..."
-            - "Make me an illustration of..."
-            - "Design a scene with..."
+            - "Generate a video of..."
+            - "Make me a song of..."
+            - "Design a TTS for..."
+            - "Generate an audio for..."
             """,
             llm=OpenAIChat(
                 openai_api_key=self.api_key,
@@ -97,7 +98,10 @@ class CreateAgent:
 
         self.trending_nsfw_agent = Agent(
             agent_name="nsfw-detector",
-            system_prompt="You are an AI agent specialized in detecting NSFW content in images. Analyze the given image and respond with 'SAFE' or 'UNSAFE'.",
+            system_prompt="""You are an AI agent specialized in detecting NSFW content in prompts.
+            Analyze the given image and respond with only 'SAFE' or 'UNSAFE'.
+            Be conservative - if in doubt, mark as UNSAFE.
+            Consider both explicit content and subtle implications.""",
             llm=GPT4VisionAPI(
                 openai_api_key=os.getenv("OPENAI_API_KEY"),
                 model_name="gpt-4o",
@@ -109,7 +113,7 @@ class CreateAgent:
             agent_name="tweet-generator",
             system_prompt="""You are a social media expert who creates engaging tweets about digital creations. 
             Include relevant hashtags and create excitement about the artwork. Keep tweets under 100 characters. 
-            Always include the creator's handle if available. The tweet will be posted with an image attached.""",
+            The tweet will be posted with an image attached.""",
             llm=GPT4VisionAPI(
                 openai_api_key=os.getenv("OPENAI_API_KEY"),
                 model_name="gpt-4o",
@@ -319,8 +323,16 @@ Format: Return only the response message, no explanations.""",
     async def is_trending_nsfw(self, image_url: str) -> bool:
 
         result = self.trending_nsfw_agent.run(
-            task=f"Analyze this image for NSFW content. Reply TRUE or FALSE:",
+            task=f"Analyze this image for NSFW content. Reply SAFE or UNSAFE:",
             img=image_url,
         )
         print(result)
-        return result.lower() == "true"
+        # Normalize and validate response
+        response = str(result).strip().upper()
+        if response not in ["SAFE", "UNSAFE"]:
+            logger.error(f"Invalid safety check response: {response}")
+            return False
+        if response == "SAFE":
+            return True
+        else:
+            return False

@@ -41,10 +41,11 @@ class PostController:
             print(f"Error loading used URLs: {e}")
             return {}
 
-    def _save_used_urls(self):
+    async def _save_used_urls(self):
         """Save used posts with timestamps to file"""
         try:
             os.makedirs(os.path.dirname(self.used_urls_file), exist_ok=True)
+
             # Convert dictionary to list of posts with timestamps
             posts_list = [
                 {"url": url, "timestamp": timestamp.isoformat()}
@@ -68,9 +69,9 @@ class PostController:
         }
 
         # Try up to 3 times to get a new creation
-        for attempt in range(3):
+        for attempt in range(5):
             # Fetch random creation
-            creation = self.fetch_random_creation()
+            creation = await self.fetch_random_creation()
             if not creation:
                 print("Failed to fetch creation")
                 return
@@ -114,7 +115,7 @@ class PostController:
             if success:
                 # Add URL with current timestamp to used set and save
                 self.used_urls[image_url] = current_time
-                self._save_used_urls()
+                await self._save_used_urls()
                 return
 
         print("Failed to find a suitable creation after 3 attempts")
@@ -123,7 +124,7 @@ class PostController:
         """Fetch a random creation from the API"""
         try:
             headers = {
-                "X-API-Key": os.getenv("X_API_KEY"),
+                "X-API-Key": os.getenv("TRENDING_API_KEY"),
                 "Content-Type": "application/json",
             }
             response = requests.get(
@@ -144,12 +145,13 @@ class PostController:
         """Post the tweet using Selenium"""
         try:
             # Navigate to home
-            self.action_handler.browser.navigate("https://twitter.com/home")
+            self.handler.browser.navigate("https://twitter.com/home")
             await asyncio.sleep(3)
 
             # Use the existing tweet posting functionality with image
-            tweet_controller = TweetController(self.action_handler)
+            tweet_controller = TweetController(self.handler)
             success = await tweet_controller.post_tweet(tweet_text, image_url)
+
 
             if success:
                 print(f"Successfully posted tweet: {tweet_text}")

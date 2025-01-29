@@ -7,6 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from src.services.utils import download_media, is_after_cutoff
 from typing import List, Dict
 import time
 import json
@@ -175,9 +176,7 @@ class MessageController:
             # Process each conversation
             for i, (handle, conv_element) in enumerate(conversations, 1):
                 try:
-                    self.logger.info(
-                        f"\n--- Processing conversation {i}/{len(conversations)} with {handle} ---"
-                    )
+                    self.logger.info(f"\n--- Processing conversation {i}/{len(conversations)} with {handle} ---")
 
                     # Open conversation
                     actions = ActionChains(self.handler.browser.driver)
@@ -192,10 +191,23 @@ class MessageController:
                         self.logger.info(f"No messages found for {handle}")
                         continue
 
-                    # Check if last message is from them
+                    # Check if last message is from them and after cutoff date
                     last_message = messages[-1]
                     if last_message.get("is_from_us", False):
                         self.logger.info(f"Last message is from us, skipping {handle}")
+                        continue
+
+                    # Get timestamp from conversation
+                    time_elements = conv_element.find_elements(By.CSS_SELECTOR, "time")
+                    is_valid_timestamp = False
+                    for time_elem in time_elements:
+                        datetime_attr = time_elem.get_attribute("datetime")
+                        if datetime_attr and is_after_cutoff(datetime_attr):
+                            is_valid_timestamp = True
+                            break
+                    
+                    if not is_valid_timestamp:
+                        self.logger.debug("Skipping message from before cutoff date")
                         continue
 
                     self.logger.info(f"Found unreplied message: {last_message['text']}")
@@ -280,8 +292,8 @@ class MessageController:
                     if confirmation and share_prompt:
                         self.logger.info("Sending response messages...")
                         # Send confirmation with image
-                        image_url = generation_result.get("link")
-                        await self.send_message(confirmation, image_url=image_url)
+                        media_url = generation_result.get("link")
+                        await self.send_message(confirmation, media_url=media_url)
                         # Send share prompt without image
                         await self.send_message(share_prompt)
 
@@ -292,7 +304,7 @@ class MessageController:
                                     "text": confirmation,
                                     "timestamp": time.time(),
                                     "from_us": True,
-                                    "has_image": bool(image_url),
+                                    "has_image": bool(media_url),
                                 },
                             )
                             self.memory.add_dm(
@@ -490,8 +502,8 @@ class MessageController:
 
         return messages
 
-    async def send_message(self, message: str, image_url: str = None):
-        """Send a message in the current conversation with optional image"""
+    async def send_message(self, message: str, media_url: str = None):
+        """Send a message in the current conversation with optional media (image or video)"""
         try:
             # Find input box
             self.logger.info("Looking for message input box...")
@@ -511,14 +523,18 @@ class MessageController:
             actions.perform()
             await asyncio.sleep(1)
 
-            # If we have an image, upload it first
-            if image_url:
+            # If we have media, upload it first
+            if media_url:
                 try:
-                    # Download image
-                    print("Downloading image...", image_url)
-                    local_path = await self.download_image(image_url)
+                    # Check if source URL is an audio file
+                    is_audio = media_url.lower().endswith(('.mp3', '.wav', '.ogg'))
+                    
+                    # Download media
+                    print("Downloading media...", media_url)
+                    local_path = await download_media(media_url)
+                    
                     if not local_path:
-                        self.logger.error("Failed to download image")
+                        self.logger.error("Failed to download media")
                         return False
 
                     # Find file input
@@ -530,24 +546,34 @@ class MessageController:
                         self.logger.error("Could not find file input")
                         return False
 
-                    # Upload image
+                    # Upload media
                     absolute_path = os.path.abspath(local_path)
-                    self.logger.info(f"Uploading image from {absolute_path}")
+                    self.logger.info(f"Uploading media from {absolute_path}")
                     file_input.send_keys(absolute_path)
 
-                    # Wait for upload and verify preview
-                    try:
-                        await self.wait_and_find_element(
-                            "[data-testid='attachments']", timeout=10
-                        )
-                        self.logger.info("Image preview confirmed")
-                    except Exception as e:
-                        self.logger.error(f"Image preview not found after upload: {e}")
-                        return False
+                    # For audio files, just wait without preview verification
+                    if is_audio:
+                        self.logger.info("Audio file detected, waiting for upload...")
+                        await asyncio.sleep(8)  # Wait for audio upload to complete
+                    else:
+                        # For other media types, verify preview
+                        try:
+                            preview = await self.wait_and_find_element(
+                                "[data-testid='attachments']", timeout=30
+                            )
+                            if preview:
+                                self.logger.info("Media preview confirmed")
+                            else:
+                                self.logger.error("Media preview not found after upload")
+                                return False
+                        except Exception as e:
+                            self.logger.error(f"Media preview not found after upload: {e}")
+                            return False
 
                 except Exception as e:
-                    self.logger.error(f"Error uploading image: {e}")
+                    self.logger.error(f"Error uploading media: {e}")
                     return False
+
             await asyncio.sleep(1)
             # Type message
             for char in message:
@@ -572,23 +598,22 @@ class MessageController:
             actions.pause(random.uniform(0.3, 0.7))
             actions.click()
             actions.perform()
-
+            if is_audio:
+                await asyncio.sleep(5)
             # Wait for message to appear in conversation
             self.logger.info("Waiting for message to appear in conversation...")
-            await asyncio.sleep(2)  # Give time for message to send
+            await asyncio.sleep(5)  # Give time for message to send
 
             # Verify message appears in conversation
             messages = await self.get_current_conversation_details()
-            if (
-                messages
-                and messages[-1].get("is_from_us")
-                and messages[-1]["text"] == message
-            ):
-                self.logger.info("Message successfully sent and verified")
-                return True
-            else:
-                self.logger.error("Could not verify message was sent")
-                return False
+            if messages and messages[-1].get("is_from_us"):
+                # Check if our message exists in the last message
+                if message in messages[-1]["text"]:
+                    self.logger.info("Message successfully sent and verified")
+                    return True
+            
+            self.logger.error("Could not verify message was sent")
+            return False
 
         except Exception as e:
             self.logger.error(f"Error sending message: {e}")
@@ -868,28 +893,3 @@ class MessageController:
         except Exception as e:
             self.logger.error(f"Error clicking accept button: {str(e)}")
             return False
-
-    async def download_image(self, image_url: str) -> str:
-        """Download image from URL and return local path."""
-        try:
-            # Create temp directory if it doesn't exist
-            temp_dir = Path("temp")
-            temp_dir.mkdir(exist_ok=True)
-
-            # Generate temporary file path
-            temp_path = temp_dir / f"temp_{int(time.time())}.jpg"
-
-            # Download image
-            response = requests.get(image_url, timeout=10)
-            response.raise_for_status()
-
-            # Save image
-            with open(temp_path, "wb") as f:
-                f.write(response.content)
-
-            self.logger.info(f"Image downloaded to {temp_path}")
-            return str(temp_path)
-
-        except Exception as e:
-            self.logger.error(f"Error downloading image: {e}")
-            return None

@@ -50,7 +50,7 @@ class MainController:
             create_api=self.create_api,
         )
         self.post_controller = PostController(
-            self.action_handler,
+            handler=self.action_handler,
             memory=self.memory,
             create_agent=self.create_agent,
             create_api=self.create_api,
@@ -59,20 +59,45 @@ class MainController:
         # Control flags
         self.running = False
 
+        # Add scheduling state
+        self.last_post_time = datetime.now()
+        self.post_interval = 3600  # 1 hour in seconds
+
+    async def schedule_posts(self):
+        """Handle scheduled posts."""
+        while self.running:
+            try:
+                current_time = datetime.now()
+                time_since_last_post = (current_time - self.last_post_time).total_seconds()
+                
+                if time_since_last_post >= self.post_interval:
+                    logger.info("\nRunning scheduled post creation...")
+                    await self.post_controller.post_creation()
+                    self.last_post_time = current_time
+                
+                # Sleep for a minute before checking again
+                await asyncio.sleep(60)
+                
+            except Exception as e:
+                logger.error(f"Error in post scheduling: {e}")
+                await asyncio.sleep(60)
+
     async def run(self):
         """Main run loop."""
         self.running = True
         try:
-
             if not await self.action_handler.ensure_logged_in():
                 logger.error("Failed to log in")
                 return
+
+            # Start post scheduling task
+            post_task = asyncio.create_task(self.schedule_posts())
 
             while self.running:
                 try:
                     logger.info("\nStarting new processing cycle")
                     logger.info("=" * 50)
-                    await self.post_controller.post_creation()
+                    
                     # Process message requests
                     logger.info("\nChecking message requests...")
                     await self.message_controller.process_message_requests()
@@ -105,6 +130,12 @@ class MainController:
         except Exception as e:
             logger.error(f"Fatal error: {e}")
         finally:
+            # Cancel post scheduling task
+            post_task.cancel()
+            try:
+                await post_task
+            except asyncio.CancelledError:
+                pass
             self.cleanup()
 
     def cleanup(self):

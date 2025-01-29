@@ -7,6 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from src.services.utils import download_media, is_after_cutoff
 import time
 import json
 import os
@@ -43,6 +44,19 @@ class MentionController:
             # Process each mention
             for mention in mentions:
                 try:
+                    # Get timestamp and check if it's after cutoff
+                    time_elements = mention.find_elements(By.CSS_SELECTOR, "time")
+                    is_valid_timestamp = False
+                    for time_elem in time_elements:
+                        datetime_attr = time_elem.get_attribute("datetime")
+                        if datetime_attr and is_after_cutoff(datetime_attr):
+                            is_valid_timestamp = True
+                            break
+                    
+                    if not is_valid_timestamp:
+                        self.logger.debug("Skipping mention from before cutoff date")
+                        continue
+
                     # Get tweet ID and handle from the element
                     tweet_id = await self.get_tweet_id(mention)
                     handle = await self.get_handle_from_mention(mention)
@@ -298,13 +312,13 @@ class MentionController:
                     await asyncio.sleep(random.uniform(0.03, 0.1))
                 await asyncio.sleep(1)  # Wait a moment after typing
 
-                # If we have an image, upload it first
+                # If we have an image or video, upload it first
                 if img:
                     try:
-                        # Download image
-                        local_path = await self.download_image(img)
+                        # Download media
+                        local_path = await download_media(img)
                         if not local_path:
-                            self.logger.error("Failed to download image")
+                            self.logger.error("Failed to download media")
                             return False
 
                         # Find file input
@@ -316,25 +330,27 @@ class MentionController:
                             self.logger.error("Could not find file input")
                             return False
 
-                        # Upload image
+                        # Upload media
                         absolute_path = os.path.abspath(local_path)
-                        self.logger.info(f"Uploading image from {absolute_path}")
+                        self.logger.info(f"Uploading media from {absolute_path}")
                         file_input.send_keys(absolute_path)
 
                         # Wait for upload and verify preview
                         try:
-                            await self.wait_and_find_element(
-                                "[data-testid='attachments']", timeout=10
+                            preview = await self.wait_and_find_element(
+                                "[data-testid='attachments']", timeout=30
                             )
-                            self.logger.info("Image preview confirmed")
+                            if preview:
+                                self.logger.info("Media preview confirmed")
+                            else:
+                                self.logger.error("Media preview not found after upload")
+                                return False
                         except Exception as e:
-                            self.logger.error(
-                                f"Image preview not found after upload: {e}"
-                            )
+                            self.logger.error(f"Media preview not found after upload: {e}")
                             return False
 
                     except Exception as e:
-                        self.logger.error(f"Error uploading image: {e}")
+                        self.logger.error(f"Error uploading media: {e}")
                         return False
                 await asyncio.sleep(1)
 
@@ -465,28 +481,3 @@ class MentionController:
         """Save replied mentions"""
         with open("data/replied_mentions.json", "w") as f:
             json.dump(list(mentions), f)
-
-    async def download_image(self, image_url: str) -> str:
-        """Download image from URL and return local path."""
-        try:
-            # Create temp directory if it doesn't exist
-            temp_dir = Path("temp")
-            temp_dir.mkdir(exist_ok=True)
-
-            # Generate temporary file path
-            temp_path = temp_dir / f"temp_{int(time.time())}.jpg"
-
-            # Download image
-            response = requests.get(image_url, timeout=10)
-            response.raise_for_status()
-
-            # Save image
-            with open(temp_path, "wb") as f:
-                f.write(response.content)
-
-            self.logger.info(f"Image downloaded to {temp_path}")
-            return str(temp_path)
-
-        except Exception as e:
-            self.logger.error(f"Error downloading image: {e}")
-            return None

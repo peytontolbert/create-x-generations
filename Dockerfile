@@ -32,10 +32,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
+RUN mkdir -p data/
+
 COPY . .
 
-# Create directory for browser data
-RUN mkdir -p /app/browser_data && chmod 777 /app/browser_data
 
 # Start Xvfb and run the application
 CMD Xvfb :99 -screen 0 1024x768x16 & python main.py 
